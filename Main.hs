@@ -65,25 +65,14 @@ parseOnMapMaybe ifc xs = (last xs, sequence . map (\x -> readMaybe x :: Maybe Do
     where
         ignoreFirstColumn = cutOff ifc init
 
-parseConduit :: String -> Bool -> Conduit String (ResourceT IO) (String, Maybe Vector)
-parseConduit fs ifc = do
-    s <- await
-    case s of
-        Nothing -> return ()
-        Just str -> do      
-            yield $ parseOnMapMaybe ifc . splitOn fs $ str
-            parseConduit fs ifc
+parseConduit :: String -> Bool -> Conduit String (ResourceT IO) (String, Vector)
+parseConduit fs ifc = awaitForever $ yield . parseClass . parseOnMapMaybe ifc . splitOn fs    
 
 getOutSink :: Show a => Maybe FilePath -> Sink a (ResourceT IO) ()
 getOutSink fp = case fp of
                 Just f -> fileOutSink f
                 Nothing -> consoleOutSink
 
-randomlyDivide :: StdGen -> Double -> [a] -> ([a], [a])
-randomlyDivide g p xs = (\(xs, ys) -> (map fst xs, map fst ys)) . partition (\x -> snd x <= p) $ zippWithMask
-    where
-        zippWithMask = zip xs rms
-        rms = take (length xs) $ randomRs (0, 1) g
 
 parseClass :: (String, Maybe a) -> (String, a)
 parseClass (c, vs) = case vs of
@@ -97,6 +86,19 @@ getFaultsPercent xs cs = faultsCount / totalCount
                         . zipWith (\x y -> (fst x, fst y)) xs $ cs
         totalCount = fromIntegral . length $ xs
 
+
+randomlyDivide :: StdGen -> Double -> [a] -> ([a], [a])
+randomlyDivide g p xs = (\(xs, ys) -> (map fst xs, map fst ys)) . partition (\x -> snd x <= p) $ zippWithMask
+    where
+        zippWithMask = zip xs rms
+        rms = take (length xs) $ randomRs (0, 1) g
+
+type ClassifyData = [(String, Vector)]
+type TrainingDataPercent = Double
+type FaultsPercent = Double
+type RetryCount = Int
+type ClassifyValue = (ClassifyResult, TrainingSet)
+type ClassifyState = (Double, ClassifyValue)
 type TrainingSetSpec = M.Map String [(Double, Double)]
 
 getTrainingSetSpec :: TrainingSet -> TrainingSetSpec 
@@ -104,13 +106,8 @@ getTrainingSetSpec = M.map (map (\xs -> (mean xs, dispersion xs)) . transpose)
 
 --getTrainingSetIndexes :: ClassifyData -> TrainingSet -> [Int]
 --getTrainingSetIndexes cd ts = 
-
-type ClassifyData = [(String, Maybe Vector)]
-type TrainingDataPercent = Double
-type FaultsPercent = Double
-type RetryCount = Int
-type ClassifyValue = (ClassifyResult, TrainingSet)
-type ClassifyState = (Double, ClassifyValue)
+--    where
+--        tsList = M.toList ts
 
 getBestClassifier :: StdGen -> ClassifyData -> TrainingDataPercent -> RetryCount 
                     -> State ClassifyState ClassifyValue
@@ -131,13 +128,12 @@ getBestClassifier g cd p n = do
         (trainingData, testData) = randomlyDivide g p cd
         ng = snd $ next g
         trainingSet = M.fromList 
-            . map parseClass
-            . map (foldl (\(_,a1) (b,b1) -> (b, (:) <$> b1 <*> a1)) ("", Just []))
+            . map (foldl (\(_,a1) (b,b1) -> (b, b1 : a1)) ("", []))
             . groupBy (\(a,_) (a1,_) -> a == a1) 
-            . sort 
+            . sort
             $ trainingData
 
-        testSet = map parseClass testData
+        testSet = testData
         classifyResult = classify trainingSet $ map snd testSet
         nfp = getFaultsPercent testSet classifyResult
         classifyTotalResult = (classifyResult, trainingSet)
@@ -149,7 +145,6 @@ main = do
     let inFile = args !! 0
 
     parsedMapList <- runResourceT $ source inFile $$ (parseConduit "," False) =$ (CL.consume)
-
     g <- getStdGen
     
     let (classifyResult, trainingSet) = evalState (getBestClassifier g parsedMapList 0.8 3) (1, ([], M.empty))

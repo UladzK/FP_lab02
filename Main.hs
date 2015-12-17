@@ -13,6 +13,7 @@ import Data.List.Split (splitOn)
 import qualified Data.Map as M
 import Data.List
 import System.Random
+import Control.Monad.State
 
 source :: FilePath -> Source (ResourceT IO) String
 source fp = do
@@ -85,8 +86,49 @@ randomlyDivide g p xs = (\(xs, ys) -> (map fst xs, map fst ys)) . partition (\x 
 
 parseClass :: (String, Maybe a) -> (String, a)
 parseClass (c, vs) = case vs of
-                                Nothing -> error "Incorrect training data"
-                                Just v -> (c, v)
+                        Nothing -> error "Incorrect training data"
+                        Just v -> (c, v)
+
+getFaultsPercent :: [(String, Vector)] -> ClassifyResult -> Double
+getFaultsPercent xs cs = faultsCount / totalCount
+    where
+        faultsCount = foldl (\acc (a,a1) -> if a /= a1 then acc + 1 else acc) 0 
+                        . zipWith (\x y -> (fst x, fst y)) xs $ cs
+        totalCount = fromIntegral . length $ xs
+
+type ClassifyData = [(String, Maybe Vector)]
+type TrainingDataPercent = Double
+type FaultsPercent = Double
+type RetryCount = Int
+
+getBestClassifier :: ClassifyData -> TrainingDataPercent -> RetryCount -> State FaultsPercent (ClassifyResult, TrainingSet)
+
+getBestClassifier _ _ 0 = do
+        (_, result) <- get
+        return M.toList result
+
+--getBestClassifier cd p n = do
+--    (fp, result) <- get
+--    if (nfp < fp) then
+--        put (classifyResult, trainingSet)
+--        return nfp
+--    else
+--        return ()
+--    getBestClassifier cd p (n - 1)
+
+--    where
+--        (trainingData, testData) = randomlyDivide (mkStdGen 0) p cd
+
+--        trainingSet = M.fromList 
+--            . map parseClass
+--            . map (foldl (\(_,a1) (b,b1) -> (b, (:) <$> b1 <*> a1)) ("", Just []))
+--            . groupBy (\(a,_) (a1,_) -> a == a1) 
+--            . sort 
+--            $ trainingData
+
+--        testSet = map parseClass testData
+--        classifyResult = classify trainingSet $ map snd testSet
+--        nfp = getFaultsPercent testSet classifyResult
 -----------------------------------------------------------------
 main = do
 

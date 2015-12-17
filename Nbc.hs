@@ -2,6 +2,7 @@ module Nbc
 (
     Vector,
     TrainingSet,
+    ClassifyResult,
     classify    
 ) where
 
